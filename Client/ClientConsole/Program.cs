@@ -47,15 +47,20 @@ namespace Client
 
                 endPoint = new IPEndPoint(address, portNumber);
                 ConnectClient();
+
                 while (client.Connected)
                 {
                     if (!hasJoined)
                     {
                         SendJoinMessage();
                         hasJoined = true;
+                        ShowMenuChannel();
                     }
-
-                    WaitForMessages();
+                    else
+                    {
+                        string userInput = Console.ReadLine();
+                        ProcessCommand(userInput);
+                    }
                 }
             }
             catch
@@ -73,17 +78,23 @@ namespace Client
                 Console.WriteLine("Connected to the server!");
                 Console.Clear();
 
-                // Receive the list of available channels from the server
-                string availableChannels = ReceiveMessage();
-                Console.WriteLine(availableChannels);
-
-                // Prompt the user to enter a channel name
-                Console.WriteLine("Enter a channel name:");
-                channel = Console.ReadLine();
-
                 // Prompt the user to enter their name
                 Console.WriteLine("Enter your name:");
                 name = Console.ReadLine();
+
+                string availableChannels = ReceiveMessage();
+                if (availableChannels != "\n\r\n")
+                {
+                    Console.WriteLine("----- Available channels: -----");
+                    Console.WriteLine("\n");
+                    Console.WriteLine(" - " + availableChannels);
+                    Console.WriteLine("\n");
+                    Console.WriteLine("----------------\n");
+                }
+
+                ShowMenu();
+
+
             }
             catch
             {
@@ -105,16 +116,6 @@ namespace Client
                         // Receive and display the received message
                         string receivedMessage = ReceiveMessage();
                         Console.WriteLine(receivedMessage);
-                    }
-
-                    // Check if the user has entered a message
-                    if (Console.KeyAvailable)
-                    {
-                        // Read the message from the user
-                        string userInput = Console.ReadLine();
-
-                        // Send the message to the server
-                        SendRegularMessage(userInput);
                     }
                 }
             }
@@ -163,21 +164,19 @@ namespace Client
             string joinMessage = $"JOIN:{channel}:{name}";
             SendMessage(joinMessage);
             Console.Clear();
-            Console.WriteLine($"You have joined the channel {channel} as {name}.\n To leave write [/leave]");
+            Console.WriteLine($"You have joined the channel {channel} as {name}.\n");
         }
 
-        static void SendRegularMessage(string message)
+        static void SendLeaveMessage()
         {
-            if (message.ToLower() == "/leave")
-            {
-                string leaveMessage = $"LEAVE:{channel}:{name}";
-                SendMessage(leaveMessage);
-            }
-            else
-            {
-                string regularMessage = $"MESSAGE:{channel}:{name}:{message}";
-                SendMessage(regularMessage);
-            }
+            string leaveMessage = $"LEAVE:{channel}:{name}";
+            SendMessage(leaveMessage);
+        }
+
+        static void SendCreateRoomMessage(string newChannel)
+        {
+            string createRoomMessage = $"CREATE:{newChannel}";
+            SendMessage(createRoomMessage);
         }
 
         static void SendMessage(string message)
@@ -191,6 +190,93 @@ namespace Client
             byte[] buffer = new byte[1024];
             int bytesRead = client.Receive(buffer);
             return Encoding.UTF8.GetString(buffer, 0, bytesRead);
+        }
+
+        static void ProcessCommand(string message)
+        {
+            switch (message.ToLower())
+            {
+                case "/join":
+                    break;
+                case "/leave":
+                    SendLeaveMessage();
+                    ShowMenu();
+                    break;
+                case "/exit":
+                    DisconnectClient();
+                    break;
+                default:
+                    string regularMessage = $"MESSAGE:{channel}:{name}:{message}";
+                    SendMessage(regularMessage);
+                    break;
+            }
+        }
+
+        static void ShowMenu()
+        {
+            Console.WriteLine("----- Menu -----");
+            Console.WriteLine("Available commands:");
+            Console.WriteLine(" - /join [Channel Name]: Join a new channel");
+            Console.WriteLine(" - /create : Create a new channel");
+            Console.WriteLine(" - /exit : Exit the program");
+            Console.WriteLine("----------------");
+            Console.WriteLine("Enter your command:");
+
+            string userInput = Console.ReadLine();
+            string[] commandParts = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+
+
+            if (commandParts.Length == 0)
+            {
+                Console.WriteLine("Invalid command. Please try again.");
+                return;
+            }
+
+            string command = commandParts[0].ToLower();
+
+            switch (command)
+            {
+                case "/join":
+                    if (commandParts.Length >= 2)
+                    {
+                        string newChannel = commandParts[1];
+                        channel = newChannel;
+                        SendJoinMessage();
+                    }
+                    else
+                    {
+                        Console.WriteLine("Invalid command. Please specify a channel to join.");
+                    }
+                    break;
+                case "/create":
+                    if (commandParts.Length >= 2)
+                    {
+                        string newChannel = commandParts[1];
+                        channel = newChannel;
+                        SendJoinMessage();
+                    }
+                    else
+                    {
+                        Console.WriteLine("Invalid command. Please specify a channel name to create.");
+                    }
+                    break;
+                case "/exit":
+                    DisconnectClient();
+                    break;
+                default:
+                    Console.WriteLine("Invalid command. Please try again.");
+                    break;
+            }
+        }
+
+        static void ShowMenuChannel()
+        {
+            Console.WriteLine("----- Menu -----");
+            Console.WriteLine("Available commands:");
+            Console.WriteLine(" - /leave : Leave the channel");
+            Console.WriteLine(" - /exit : Exit the program");
+            Console.WriteLine("----------------");
+            Console.WriteLine("\n");
         }
     }
 }

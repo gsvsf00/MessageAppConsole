@@ -1,20 +1,20 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Server
 {
     class Program
     {
-        static ConcurrentDictionary<string, List<Socket>> channelClients;
+        static ConcurrentDictionary<string, ConcurrentBag<Socket>> channelClients;
 
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
-            channelClients = new ConcurrentDictionary<string, List<Socket>>();
+            channelClients = new ConcurrentDictionary<string, ConcurrentBag<Socket>>();
 
             Console.WriteLine("Starting the server...");
 
@@ -40,8 +40,8 @@ namespace Server
 
                 while (true)
                 {
-                    Socket clientSocket = listener.Accept();
-                    Task.Run(() => HandleClient(clientSocket));
+                    Socket clientSocket = await listener.AcceptAsync();
+                    _ = Task.Run(() => HandleClient(clientSocket));
                 }
             }
             catch (Exception ex)
@@ -50,7 +50,7 @@ namespace Server
             }
         }
 
-        static void HandleClient(Socket client)
+        static async Task HandleClient(Socket client)
         {
             try
             {
@@ -58,14 +58,14 @@ namespace Server
                 Console.WriteLine($"Client connected: {clientAddress}");
 
                 string availableChannels = GetAvailableChannels();
-                SendMessage(client, availableChannels);
+                await SendMessageAsync(client, availableChannels);
 
                 string channel = string.Empty;
                 string name = string.Empty;
 
-                while (true)
+                while (client.Connected)
                 {
-                    string receivedMessage = ReceiveMessage(client);
+                    string receivedMessage = await ReceiveMessageAsync(client);
                     if (!string.IsNullOrWhiteSpace(receivedMessage))
                     {
                         string[] messageParts = receivedMessage.Split(':');
@@ -122,15 +122,8 @@ namespace Server
 
         static void JoinChannel(Socket client, string channel, string name)
         {
-            if (channelClients.TryGetValue(channel, out List<Socket> clients))
-            {
-                clients.Add(client);
-            }
-            else
-            {
-                clients = new List<Socket> { client };
-                channelClients.TryAdd(channel, clients);
-            }
+            var clients = channelClients.GetOrAdd(channel, _ => new ConcurrentBag<Socket>());
+            clients.Add(client);
 
             string joinMessage = $"{name} has joined the channel.";
             BroadcastMessage(client, channel, "Server", joinMessage);
@@ -138,24 +131,35 @@ namespace Server
 
         static void LeaveChannel(Socket client, string channel, string name)
         {
-            if (channelClients.TryGetValue(channel, out List<Socket> clients))
+            if (channelClients.TryGetValue(channel, out var clients))
             {
-                clients.Remove(client);
+                clients.TryTake(out _);
 
-                string leaveMessage = $"{name} has left the channel.";
+                string leaveMessage = $"{name} has left the channel[{channel}].";
                 BroadcastMessage(client, channel, "Server", leaveMessage);
 
                 // Remove the channel from the dictionary if there are no clients left
-                if (clients.Count == 0)
+                if (clients.IsEmpty)
                 {
                     channelClients.TryRemove(channel, out _);
                 }
             }
+            else
+            {
+                // Channel not found, notify the client
+                string errorMessage = $"Channel '{channel}' not found.";
+                SendMessageAsync(client, errorMessage);
+                return; // Return without disconnecting the client from the server
+            }
+
+            // Send a message to the client confirming the channel leave
+            string leaveConfirmation = $"You have left the channel '{channel}'.";
+            SendMessageAsync(client, leaveConfirmation);
         }
 
         static void BroadcastMessage(Socket sender, string channel, string name, string message)
         {
-            if (channelClients.TryGetValue(channel, out List<Socket> clients))
+            if (channelClients.TryGetValue(channel, out var clients))
             {
                 string fullMessage = $"[{channel}]{name}: {message}";
                 byte[] buffer = Encoding.UTF8.GetBytes(fullMessage);
@@ -172,23 +176,23 @@ namespace Server
             }
         }
 
-        static string ReceiveMessage(Socket client)
+        static async Task<string> ReceiveMessageAsync(Socket client)
         {
             byte[] buffer = new byte[1024];
-            int bytesRead = client.Receive(buffer);
+            int bytesRead = await client.ReceiveAsync(buffer, SocketFlags.None);
             return Encoding.UTF8.GetString(buffer, 0, bytesRead);
         }
 
-        static void SendMessage(Socket client, string message)
+        static async Task SendMessageAsync(Socket client, string message)
         {
             byte[] buffer = Encoding.UTF8.GetBytes(message);
-            client.Send(buffer);
+            await client.SendAsync(buffer, SocketFlags.None);
         }
 
         static string GetAvailableChannels()
         {
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("Available channels:");
+            sb.AppendLine("\n");
             foreach (string channel in channelClients.Keys)
             {
                 sb.AppendLine(channel);
